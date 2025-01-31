@@ -203,7 +203,11 @@ int main() {
 			if (buffer[bufIndex] == '\r') {
 				buffer[bufIndex] = '\0';
 				while (!uart_read_ready(uart));
+				gpio_write(ledB, true);
 				parse_command();
+				gpio_write(ledB, false);
+				ledState = false;
+				timer = 0;
 			}
 		}
 	}
