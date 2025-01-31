@@ -32,7 +32,7 @@ std::bitset<4> configWriteStatus;
 
 USART_TypeDef* uart = USART2;
 
-I2CAS5600 encoder{I2C1};
+I2CAS5600 encoder;
 
 const char* commands[] = {
 	"set",
@@ -56,13 +56,19 @@ void parse_command() {
 			i = sizeof(commands) + 1;
 			break;
 		}
-		if (strlen(commands[i]) == size) {
-			if (strncmp(commands[i], token, size)) {
+		if (strncmp(commands[i], token, size) == 0) {
+			token = strtok(nullptr, " ");
+			if (i != 3 && token == nullptr) {
+				sprintf(log, "Error: %s requires a parameter", commands[i]);
+				uart_write_buf(uart, log, 28 + strlen(commands[i]));
+				i = sizeof(commands) + 2;
 				continue;
+			}
+			else {
+				size = strlen(token);
 			}
 			switch (i) {
 				case 0:
-					token = strtok(nullptr, " ");
 					uint8_t regIndex = regs::nameToIndex.at(std::string_view{token, size});
 					
 					if (regIndex == 0 || regIndex > 4) {
@@ -72,24 +78,85 @@ void parse_command() {
 					}
 					token = strtok(nullptr, " ");
 					char* temp;
-					config[regIndex - 1] = (uint16_t)strtol(token, &temp, 2);
+					config[regIndex - 1] = (uint16_t)strtoul(token, &temp, 2);
 					if (*temp != '\0' || !strcmp(token, temp)) {
 						uart_write_buf(uart, "Error, invalid number.\n", 23);
 						i = sizeof(commands) + 2;
 						continue;
 					}
+					configWriteStatus[regIndex - 1] = 1;
 					sprintf(log, "Wrote %u to %s.\n", config[regIndex - 1], regs::nameArray[regIndex].first.data());
 					uart_write_buf(uart, log, strlen(log));
 					token = strtok(nullptr, " ");
+					i = 0;
 					break;
 				case 1:
+					char* temp;
+					uint16_t reg = (uint16_t)strtoul(token, &temp, 2);
+					token = strtok(nullptr, " ");
+					uint16_t val = (uint16_t)strtoul(token, &temp, 2);
+					encoder.writeByte(reg, val);
+					sprintf(log, "Wrote %u to %u.\n", val, reg);
+					temp = log;
+					while (*temp != '\0') {
+						uart_write_byte(uart, *temp);
+					}
+					i = 0;
 					break;
 				case 2:
+					uint8_t regIndex = regs::nameToIndex.at(std::string_view{token, size});
+					
+					if (regIndex == 0 || regIndex > 4) {
+						uart_write_buf(uart, "Error: invalid register, stopping", 23);
+						i = sizeof(commands) + 2;
+						continue;
+					}
+					i2c_start(I2C1);
+					i2c_addr(I2C1, AS5600ID);
+					i2c_write(I2C1, regs::addrs[regIndex]);
+					uint8_t vals[2];
+					i2c_read(I2C1, AS5600ID, vals, regs::sizes[regIndex] + 1);
+					sprintf(log, "Wrote %u to %u.\n", (uint16_t)vals[1] << 8 | vals[0], reg);
+					char* temp;
+					temp = log;
+					while (*temp != '\0') {
+						uart_write_byte(uart, *temp);
+					}
+					i = 0;
 					break;
 				case 3:
+					configWriteStatus = 0;
+					i = 0;
 					break;
 				case 4:
-					break;
+					if (strncmp(token, "setting", 8) == 0) {
+						for (uint8_t i = 0; i < 4; i++) {
+							if (configWriteStatus[i]) {
+								encoder.writeByte(regs::addrs[i + 1], config[i]);
+							}
+						}
+						if (configWriteStatus.any()) {
+							encoder.writeByte(0xFF, 0x40);
+						}
+						sprintf(log, "Wrote %u configs and burned the settings.\n", configWriteStatus.count());
+						uart_write_buf(uart, log, 41);
+					} else if (strncmp(token, "angle", 8) == 0) {
+						for (uint8_t i = 0; i < 4; i++) {
+							if (configWriteStatus[i]) {
+								encoder.writeByte(regs::addrs[i + 1], config[i]);
+							}
+						}
+						if (configWriteStatus.any()) {
+							encoder.writeByte(0xFF, 0x80);
+						}
+						sprintf(log, "Wrote %u configs and burned the angle.\n", configWriteStatus.count());
+						uart_write_buf(uart, log, 38);
+					} else {
+						uart_write_buf(uart, "Error: invalid burn command. Valid options are angle and setting.\n", 67);
+						i = sizeof(commands) + 2;
+					}
+					i = 0;
+				break;
 			}
 		}
 		else {
@@ -117,6 +184,12 @@ int main() {
 	
 	uart_init(uart, 115200);
 
+	gpio_set_mode(PIN('B', 7), GPIO_MODE_AF, GPIO_OTYPE_OPEN_DRAIN, GPIO_OSPEED_HIGH_SPEED, GPIO_PUPD_UP); // SDA
+	gpio_set_mode(PIN('B', 6), GPIO_MODE_AF, GPIO_OTYPE_OPEN_DRAIN, GPIO_OSPEED_HIGH_SPEED, GPIO_PUPD_UP); // SCL
+	gpio_set_af(PIN('B', 7), 4);
+	gpio_set_af(PIN('B', 6), 4);
+	encoder = I2CAS5600(I2C1);
+
 	uint32_t timer = 0, period = 2000;
 	
 	while (true) {
@@ -127,8 +200,10 @@ int main() {
 
 		if (uart_read_ready(uart)) {
 			buffer[bufIndex] = uart_read_byte(uart);
-			if (buffer[bufIndex] == '\n') {
+			if (buffer[bufIndex] == '\r') {
 				buffer[bufIndex] = '\0';
+				while (!uart_read_ready(uart));
+				parse_command();
 			}
 		}
 	}
