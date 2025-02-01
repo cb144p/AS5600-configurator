@@ -53,7 +53,7 @@ public:
         iTim.tim->CR1 |= 0b1;
     }
 
-    static ITimer periodicInit(TIM_TypeDef* _tim, uint32_t frequency) {
+    static ITimer periodicInit(TIM_TypeDef* _tim, float frequency) {
         ITimer iTim{};
         iTim.tim = _tim;
         
@@ -70,28 +70,15 @@ public:
         }
 
         iTim.tim->SMCR &= ~TIM_SMCR_SMS_Msk;
-        iTim.tim->PSC = (frequency <= AHB_FREQUENCY / 65536) ? 65535 : AHB_FREQUENCY / frequency;
-        iTim.tim->ARR = AHB_FREQUENCY / (iTim.tim->PSC + 1) / frequency;
-        iTim.psc = iTim.tim->PSC + 1;
-        iTim.arv = iTim.tim->ARR;
+        iTim.setFrequency(frequency);
         iTim.tim->CR1 |= 0b1;
     }
 
     /**
      * Approximation of frequency, cannot be guarunteed to be very accurate.
      */
-    void setFrequency(uint32_t frequency) {
-        tim->PSC = (frequency <= AHB_FREQUENCY / 65536) ? 65535 : AHB_FREQUENCY / frequency;
-        tim->ARR = AHB_FREQUENCY / (tim->PSC + 1) / frequency;
-        psc = tim->PSC + 1;
-        arv = tim->ARR;
-    }
-
-    /**
-     * Approximation of frequency, cannot be guarunteed to be very accurate. Allows for fractional frequencies though
-     */
-    void setFloatingFrequency(float frequency) {
-        tim->PSC = (frequency <= AHB_FREQUENCY / 65536) ? 65535 : uint16_t(AHB_FREQUENCY / frequency);
+    void setFrequency(float frequency) {
+        tim->PSC = (uint16_t)ceilf((float)AHB_FREQUENCY / 65536.0f / frequency) - 1;
         tim->ARR = uint16_t((float)AHB_FREQUENCY / (tim->PSC + 1) / frequency);
         psc = tim->PSC + 1;
         arv = tim->ARR;
