@@ -1,12 +1,19 @@
 #ifndef HANDLERS_H
 #define HANDLERS_H
 
+#include <stm32f411xe.h>
+#include <vector>
 #include "usart.h"
 
-void initializeHandlerPriorities() {
-	*(unsigned long int*)0xE000ED18 |= 0b0001 << 20 | 0b0010 << 12 | 0b0011 << 4; // Sets usage to 1, bus to 2 and memory to 3.
-	//*(unsigned long int*)0xE000E100 |= 1UL << 6 | 1UL << 5 | 1UL << 4; // Enables interrupts 4, 5, and 6. I think these are irq related.
-	*(unsigned long int*)0xE000ED24 |= 0b111 << 16; // Enables usage, bus, and memory fault handlers
+constexpr uint8_t nvicRegCount = 85; // Number of additional interrupt spots on top of cm4 base 16.
+
+void initializeBaseHandlers() {
+	NVIC_SetPriority(IRQn_Type::UsageFault_IRQn, 1);
+	NVIC_SetPriority(IRQn_Type::BusFault_IRQn, 2);
+	NVIC_SetPriority(IRQn_Type::MemoryManagement_IRQn, 3);
+	NVIC_EnableIRQ(IRQn_Type::UsageFault_IRQn);
+	NVIC_EnableIRQ(IRQn_Type::BusFault_IRQn);
+	NVIC_EnableIRQ(IRQn_Type::MemoryManagement_IRQn);
 }
 
 void Usage_Handler() {

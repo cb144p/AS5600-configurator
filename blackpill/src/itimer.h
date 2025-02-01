@@ -3,11 +3,11 @@
 
 #include <stdint.h>
 #include <stm32f411xe.h>
+#include <cmath>
 
 #include "rcc.h"
 #include "gpio.h"
 
-// Right now there is no safety so don't fuck it up and initialze two things on the same timer/channel/pin
 class ITimer {
 public:
     TIM_TypeDef* tim = nullptr;
@@ -45,7 +45,7 @@ public:
         }
 
         iTim.tim->SMCR &= ~TIM_SMCR_SMS_Msk;
-        iTim.tim->PSC = AHB_FREQUENCY / frequency;
+        iTim.tim->PSC = (frequency <= AHB_FREQUENCY / 65536) ? 65535 : AHB_FREQUENCY / frequency;
         iTim.tim->ARR = AHB_FREQUENCY / (iTim.tim->PSC + 1) / frequency;
         iTim.psc = iTim.tim->PSC + 1;
         iTim.arv = iTim.tim->ARR;
@@ -70,11 +70,31 @@ public:
         }
 
         iTim.tim->SMCR &= ~TIM_SMCR_SMS_Msk;
-        iTim.tim->PSC = AHB_FREQUENCY / frequency;
+        iTim.tim->PSC = (frequency <= AHB_FREQUENCY / 65536) ? 65535 : AHB_FREQUENCY / frequency;
         iTim.tim->ARR = AHB_FREQUENCY / (iTim.tim->PSC + 1) / frequency;
         iTim.psc = iTim.tim->PSC + 1;
         iTim.arv = iTim.tim->ARR;
         iTim.tim->CR1 |= 0b1;
+    }
+
+    /**
+     * Approximation of frequency, cannot be guarunteed to be very accurate.
+     */
+    void setFrequency(uint32_t frequency) {
+        tim->PSC = (frequency <= AHB_FREQUENCY / 65536) ? 65535 : AHB_FREQUENCY / frequency;
+        tim->ARR = AHB_FREQUENCY / (tim->PSC + 1) / frequency;
+        psc = tim->PSC + 1;
+        arv = tim->ARR;
+    }
+
+    /**
+     * Approximation of frequency, cannot be guarunteed to be very accurate. Allows for fractional frequencies though
+     */
+    void setFloatingFrequency(float frequency) {
+        tim->PSC = (frequency <= AHB_FREQUENCY / 65536) ? 65535 : uint16_t(AHB_FREQUENCY / frequency);
+        tim->ARR = uint16_t((float)AHB_FREQUENCY / (tim->PSC + 1) / frequency);
+        psc = tim->PSC + 1;
+        arv = tim->ARR;
     }
 
     // RM uses 1 based indexing, but I am using 0.
@@ -100,6 +120,17 @@ public:
         tim->CCER |= 0b11 << channel;
     }
 
+    void addEmptyPWMChannel(uint8_t channel) {
+        if (channel <= 1) {
+            tim->CCMR1 |= (0b110 << TIM_CCMR1_OC1M_Pos | TIM_CCMR1_OC1PE) << channel * 8;
+        }
+        else {
+            tim->CCMR2 |= (0b110 << TIM_CCMR2_OC3M_Pos | TIM_CCMR2_OC3PE) << (channel - 2) * 8;
+        }
+
+        tim->CCER |= 0b11 << channel;
+    }
+
     void writePWMCount(uint16_t count, uint8_t channel) {
         (&(tim->CCR1))[channel] = count;
     }
@@ -110,11 +141,15 @@ public:
     }
 
     void writePWMS(float seconds, uint8_t channel) {
-        (&(tim->CCR1))[channel] = seconds * AHB_FREQUENCY / psc;
+        (&(tim->CCR1))[channel] = (uint32_t)(seconds * AHB_FREQUENCY / psc);
     }
 
-    inline void enableInterrupt() {
+    inline void enableResetInterrupt() {
         tim->DIER |= TIM_DIER_UIE;
+    }
+
+    inline void enableInterruptChannel(uint8_t channel) {
+        tim->DIER |= TIM_DIER_CC1IE << channel;
     }
 
 };

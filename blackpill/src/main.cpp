@@ -7,6 +7,7 @@
 #include "systick.h"
 #include "usart.h"
 #include "I2CAS5600.h"
+#include "itimer.h"
 #include <cstring>
 #include <alloca.h>
 
@@ -173,14 +174,27 @@ void parse_command() {
 
 }
 
+uint16_t ledB = PIN('C', 13);
+bool ledState = true;
+
 int main() {
 	SystemInit();
 
-	uint16_t ledB = PIN('C', 13);
 	gpio_set_mode(ledB, GPIO_MODE_OUTPUT, GPIO_OTYPE_PUSH_PULL, GPIO_OSPEED_LOW_SPEED, GPIO_PUPD_NONE);
-	bool ledState = true;
 	gpio_write(ledB, !ledState);
 	ledState = !ledState;
+	NVIC_SetPriority(IRQn_Type::TIM2_IRQn, 4);
+	NVIC_SetVector(IRQn_Type::TIM2_IRQn, (uint32_t)((void (*)(void))([](){
+		ledState = !ledState;
+		gpio_write(ledB, ledState);
+	})));
+	ITimer ledKeeper = ITimer::periodicInit(TIM2, 1);
+	ledKeeper.enableResetInterrupt();
+	ledKeeper.enableInterruptChannel(0);
+	ledKeeper.addEmptyPWMChannel(0);
+	ledKeeper.writePWMDuty(.5, 0);
+
+	
 	
 	uart_init(uart, 115200);
 
@@ -189,25 +203,16 @@ int main() {
 	gpio_set_af(PIN('B', 7), 4);
 	gpio_set_af(PIN('B', 6), 4);
 	encoder = I2CAS5600(I2C1);
-
-	uint32_t timer = 0, period = 2000;
 	
 	while (true) {
-		if (timer_expired(&timer, period, s_ticks)) {
-			gpio_write(ledB, !ledState);
-			ledState = !ledState;
-		}
-
 		if (uart_read_ready(uart)) {
 			buffer[bufIndex] = uart_read_byte(uart);
 			if (buffer[bufIndex] == '\r') {
 				buffer[bufIndex] = '\0';
 				while (!uart_read_ready(uart));
-				gpio_write(ledB, true);
+				ledKeeper.setFrequency(60);
 				parse_command();
-				gpio_write(ledB, false);
-				ledState = false;
-				timer = 0;
+				ledKeeper.writePWMDuty(0.5, 0);
 			}
 		}
 	}
